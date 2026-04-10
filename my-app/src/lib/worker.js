@@ -1,0 +1,63 @@
+import { pipeline, env } from '@huggingface/transformers'
+
+env.allowLocalModels = false
+env.useBrowserCache = true
+
+class PipelineFactory {
+  static task = null
+  static model = null
+  static instance = null
+
+  static async getInstance(progress_callback = null) {
+    if (this.instance === null) {
+      this.instance = pipeline(this.task, this.model, {
+        dtype: 'fp32',
+        progress_callback: (data) => {
+          progress_callback({
+            status: data.status,
+            progress: data.progress ?? 0
+          })
+        }
+      })
+    }
+    return this.instance
+  }
+}
+
+self.addEventListener('message', async event => {
+  const message = event.data
+  let transcript = await transcribe(message.audio)
+  if (transcript === null) return
+
+  self.postMessage({
+    status: 'complete',
+    task: 'automatic-speech-recognition',
+    data: transcript
+  })
+})
+
+class AutomaticSpeechRecognitionPipelineFactory extends PipelineFactory {
+  static task = 'automatic-speech-recognition'
+  static model = 'onnx-community/whisper-tiny.en'  
+}
+
+const transcribe = async audio => {
+  const p = AutomaticSpeechRecognitionPipelineFactory
+  let transcriber = await p.getInstance(data => self.postMessage(data))
+
+  const options = {
+    chunk_length_s: 30,
+    stride_length_s: 5
+  }
+
+  let output = await transcriber(audio, options).catch(error => {
+    self.postMessage({
+      status: 'error',
+      task: 'automatic-speech-recognition',
+      data: error
+    })
+    return null
+  })
+
+  return output
+}
